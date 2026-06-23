@@ -1,0 +1,46 @@
+name: Sync fork from upstream
+
+# Keeps `main` a pristine mirror of NousResearch/hermes-agent, then rebases the
+# `deploy` branch (which carries docker-compose.dokploy.yml) on top so the only
+# diff from upstream is that one file. Runs daily and on demand.
+#
+# This workflow lives on `deploy` (the default branch) so the scheduler picks it
+# up. It force-updates `main` to match upstream and force-pushes the rebased
+# `deploy`; Dokploy auto-deploys from `deploy` on push.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # daily 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deploy
+        uses: actions/checkout@v4
+        with:
+          ref: deploy
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "fork-sync-bot"
+          git config user.email "fork-sync-bot@users.noreply.github.com"
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git
+          git fetch upstream main
+
+      - name: Fast-forward main to upstream
+        run: |
+          git checkout -B main upstream/main
+          git push origin main --force
+
+      - name: Rebase deploy onto main
+        run: |
+          git checkout deploy
+          git rebase main
+          git push origin deploy --force-with-lease

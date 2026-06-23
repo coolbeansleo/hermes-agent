@@ -1,0 +1,51 @@
+#
+# docker-compose.dokploy.yml — deploy overlay for Dokploy + Tailscale
+#
+# This file is OWNED by the `deploy` branch of this fork. `main` stays a
+# pristine mirror of upstream (auto-synced); this is the only file Dokploy
+# builds from, so upstream syncs never conflict with it.
+#
+# The ONLY change vs. upstream docker-compose.yml: the dashboard binds to
+# 0.0.0.0 (not 127.0.0.1) so Hermes Desktop can reach it in Remote Mode over
+# Tailscale. A non-loopback bind engages the dashboard auth gate, so the
+# basic-auth credentials below are REQUIRED (without an auth provider the
+# dashboard fails closed at startup). Values come from Dokploy env (.env).
+#
+# SECURITY: with network_mode: host, 0.0.0.0 also binds the public IP — you
+# MUST block port 9119 publicly in the Hostinger cloud firewall so the
+# dashboard is reachable only over the tailnet.
+#
+services:
+  gateway:
+    build: .
+    image: hermes-agent
+    container_name: hermes
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ~/.hermes:/opt/data
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+    command: ["gateway", "run"]
+
+  dashboard:
+    image: hermes-agent
+    container_name: hermes-dashboard
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - gateway
+    volumes:
+      - ~/.hermes:/opt/data
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+      # Basic-auth provider (engaged because we bind non-loopback). Set these
+      # in Dokploy → Environment. SECRET must be stable so sessions survive
+      # restarts; PASSWORD can be swapped to *_PASSWORD_HASH if preferred.
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
+      - HERMES_DASHBOARD_BASIC_AUTH_SECRET=${HERMES_DASHBOARD_BASIC_AUTH_SECRET}
+    # Bind to all interfaces so the desktop app can reach it over Tailscale.
+    command: ["dashboard", "--host", "0.0.0.0", "--no-open"]
