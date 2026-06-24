@@ -1,19 +1,26 @@
 #
-# docker-compose.dokploy.yml — deploy overlay for Dokploy + Tailscale
+# docker-compose.dokploy.yml — deploy overlay for Dokploy (Stack A) + Tailscale
 #
-# This file is OWNED by the `deploy` branch of this fork. `main` stays a
-# pristine mirror of upstream (auto-synced); this is the only file Dokploy
-# builds from, so upstream syncs never conflict with it.
+# Owned by the `deploy` branch of this fork; `main` stays a pristine mirror of
+# upstream (auto-synced). Dokploy builds only from this file, so upstream syncs
+# never conflict with it.
 #
-# The ONLY change vs. upstream docker-compose.yml: the dashboard binds to
-# 0.0.0.0 (not 127.0.0.1) so Hermes Desktop can reach it in Remote Mode over
-# Tailscale. A non-loopback bind engages the dashboard auth gate, so the
-# basic-auth credentials below are REQUIRED (without an auth provider the
-# dashboard fails closed at startup). Values come from Dokploy env (.env).
+# Differences vs. upstream docker-compose.yml:
+#   1. gateway keeps network_mode: host  → reaches the local LLM directly over
+#      the host's Tailscale interface (100.x), and runs messaging/cron.
+#   2. dashboard runs on dokploy-network (NOT host) so Dokploy's Traefik can
+#      route hermes.lumavida.cloud -> dashboard:9119 with Let's Encrypt TLS,
+#      exactly like other Dokploy services. It binds 0.0.0.0 inside its own
+#      container; a non-loopback bind engages the auth gate, so the basic-auth
+#      env vars below are required (without an auth provider it fails closed).
 #
-# SECURITY: with network_mode: host, 0.0.0.0 also binds the public IP — you
-# MUST block port 9119 publicly in the Hostinger cloud firewall so the
-# dashboard is reachable only over the tailnet.
+# Public exposure = Dokploy Traefik + Let's Encrypt (see Dokploy -> Domains).
+# Identity auth: keep basic auth as the baseline; optionally add Nous-Portal
+# OAuth via `hermes dashboard register` + HERMES_DASHBOARD_OAUTH_CLIENT_ID.
+#
+# NOTE: because the dashboard is now bridge-networked, its in-process agent
+# reaches the Tailscale LLM (100.x) THROUGH the host. That needs a one-time
+# host rule (MASQUERADE on tailscale0) -- see the deploy notes.
 #
 services:
   gateway:
@@ -33,19 +40,25 @@ services:
     image: hermes-agent
     container_name: hermes-dashboard
     restart: unless-stopped
-    network_mode: host
     depends_on:
       - gateway
+    networks:
+      - dokploy-network
+    expose:
+      - "9119"
     volumes:
       - ~/.hermes:/opt/data
     environment:
       - HERMES_UID=${HERMES_UID:-10000}
       - HERMES_GID=${HERMES_GID:-10000}
-      # Basic-auth provider (engaged because we bind non-loopback). Set these
-      # in Dokploy → Environment. SECRET must be stable so sessions survive
-      # restarts; PASSWORD can be swapped to *_PASSWORD_HASH if preferred.
+      # Auth gate (engaged by the non-loopback bind). Values come from Dokploy env.
       - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME}
       - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
       - HERMES_DASHBOARD_BASIC_AUTH_SECRET=${HERMES_DASHBOARD_BASIC_AUTH_SECRET}
-    # Bind to all interfaces so the desktop app can reach it over Tailscale.
+      # Public URL behind the reverse proxy (link/callback construction).
+      - HERMES_DASHBOARD_PUBLIC_URL=${HERMES_DASHBOARD_PUBLIC_URL}
     command: ["dashboard", "--host", "0.0.0.0", "--no-open"]
+
+networks:
+  dokploy-network:
+    external: true
